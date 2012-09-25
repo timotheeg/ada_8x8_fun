@@ -4,17 +4,23 @@
 <script language="JavaScript" src="http://code.jquery.com/jquery-1.8.2.min.js"></script>
 <script>
 
-var data = {};
+var data = {chars:{}, animations:{}, transitions:{}};
 
 function getMatrix()
 {
 	var m = [];
-	$("#matrix tr").each(function(){
-		var  val = 0;
-		$(this).find("td").each(function(idx, el){
-			val = val | (($(el).hasClass("on") ? 1 : 0) << idx);
+	$("#matrix tr").each(function()
+	{
+		var  val_on = 0;
+		var  val_frame1 = 0;
+		var  val_frame2 = 0;
+		$(this).find("td").each(function(idx, el)
+		{
+			if ($(el).hasClass("on")) val_on = val_on | (1 << idx);
+			else if ($(el).hasClass("frame1")) val_frame1 = val_frame1 | (1 << idx);
+			else if ($(el).hasClass("frame2")) val_frame2 = val_frame2 | (1 << idx);
 		});
-		m.push(val);
+		m.push(val_on | (val_frame1 << 8) | (val_frame2 << 16));
 	});
 	console.log(m);
 	return m;
@@ -30,6 +36,8 @@ function setMatrix(matrix)
 		trs.eq(row_idx).find("td").each(function(col_idx, el)
 		{
 			if (val & (1 << col_idx)) $(el).addClass("on");
+			else if (val & (1 << (col_idx+8))) $(el).addClass("frame1");
+			else if (val & (1 << (col_idx+16))) $(el).addClass("frame2");
 		});
 	});
 }
@@ -38,17 +46,19 @@ function setSymbol(evt)
 {
 	evt.preventDefault();
 	var symbol = $("#symbol").val()
+	var matrix_type = $("#matrix_type").val();
 	var matrix = getMatrix();
-	data[symbol] = matrix;
 
-	var link = $("#symbols ul").find("#symbol_" + symbol);
+	data[matrix_type][symbol] = matrix;
+
+	var link = $("#symbols ul#" + matrix_type).find("#symbol_" + matrix_type + "_" + symbol);
 	if (!link.length)
 	{
 		link = $(document.createElement("a"))
-			.attr({href: "#", id: "symbol_" + symbol})
-			.data({symbol: symbol})
+			.attr({href: "#", id: "symbol_" + matrix_type + "_" + symbol})
+			.data({symbol: symbol, matrix_type: matrix_type})
 			.text(symbol)
-			.appendTo($(document.createElement("li")).appendTo("#symbols ul"))
+			.appendTo($(document.createElement("li")).appendTo("#symbols ul#" + matrix_type))
 			.click(showSymbol);
 	}
 }
@@ -57,33 +67,92 @@ function addToSymbol(evt)
 {
 	evt.preventDefault();	
 	var symbol = $("#symbol").val()
+	var matrix_type = $("#matrix_type").val();
+
+	if (matrix_type == "chars") return alert("add frames to animations and transitions ony!");
+
 	var matrix = getMatrix();
-	if (!data[symbol]) setSymbol(evt);
-	else if (typeof(data[symbol][0]) == "number") data[symbol] = [data[symbol], matrix]
-	else if (typeof(data[symbol][0]) == "object") data[symbol].push(matrix);
+	if (!data[matrix_type][symbol]) setSymbol(evt);
+	else if (typeof(data[matrix_type][symbol][0]) == "number") data[matrix_type][symbol] = [data[matrix_type][symbol], matrix]
+	else if (typeof(data[matrix_type][symbol][0]) == "object") data[matrix_type][symbol].push(matrix);
 }
 
 function clear(evt)
 {
 	if (evt) evt.preventDefault();
-	tds.removeClass("on");
+	tds.removeClass(led_all_types);
+}
+
+function mror(n)
+{
+	var n1 = (n & 0xFF);
+	var n2 = ((n >> 8)) & 0xFF;
+	var n3 = ((n >> 16)) & 0xFF;
+
+	n1 = ((n1 >> 1) | ((n1 & 1) << 7));
+	n2 = ((n2 >> 1) | ((n2 & 1) << 7));
+	n3 = ((n3 >> 1) | ((n3 & 1) << 7));
+
+	return (n1 | (n2 << 8) | (n3 << 16));
+}
+
+function mrol(n)
+{
+	var n1 = (n & 0xFF);
+	var n2 = ((n >> 8)) & 0xFF;
+	var n3 = ((n >> 16)) & 0xFF;
+
+	n1 = (((n1 << 1) & 0xFE) | ((n1 & 0x80) >> 7));
+	n2 = (((n2 << 1) & 0xFE) | ((n2 & 0x80) >> 7));
+	n3 = (((n3 << 1) & 0xFE) | ((n3 & 0x80) >> 7));
+
+	return (n1 | (n2 << 8) | (n3 << 16));	
 }
 
 function doExport(evt)
 {
 	if (evt) evt.preventDefault();
-	$("#exported_data").val(JSON.stringify(data));
+
+	// the 8x8 matrix has some funky way of representing the columns, on export, we need to iterate and convert each entry to a matrix raw format
+	var exdata = $.extend(true, {}, data);
+
+	function updateMatrix(m)
+	{
+		for (var idx in m)
+		{
+			m[idx] = mror(m[idx]);
+		}
+	}
+
+	for (var idx in matrix_types)
+	{
+		var matrix_type = matrix_types[idx];
+
+		for (var symbol in exdata[matrix_type])
+		{
+			var m = exdata[matrix_type][symbol];
+			if (typeof(m[0]) == "object")
+			{
+				$.each(m, function(idx, m){updateMatrix(m);});
+			}
+			else
+			{
+				updateMatrix(m);
+			}
+		}
+	}
+
+	$("#exported_data").val(JSON.stringify(exdata));
 }
 
-var draw_animation_symbol = null;
+var draw_animation_array = null;
 var draw_animation_interval_id = 0;
 var draw_animation_cur_idx = -1;
 function animate()
 {
-	draw_animation_cur_idx = (draw_animation_cur_idx + 1) % data[draw_animation_symbol].length;
-	matrix = data[draw_animation_symbol][draw_animation_cur_idx];
+	draw_animation_cur_idx = (draw_animation_cur_idx + 1) % draw_animation_array.length;
+	matrix = draw_animation_array[draw_animation_cur_idx];
 	setMatrix(matrix);
-
 }
 
 function stopanimation()
@@ -97,31 +166,73 @@ function showSymbol(evt)
 	evt.preventDefault();
 	stopanimation();
 
-	var block = data[$(this).text()];
+	var symbol = $(this).data("symbol");
+	var matrix_type = $(this).data("matrix_type");
+
+	$("#symbol").val(symbol);
+	$("#matrix_type").val(matrix_type);
+
+	var block = data[matrix_type][symbol];
 	if (typeof(block[0]) == "object")
 	{
-		// animation sequence, animate :)
-		draw_animation_symbol = $(this).text();
+		// animation or transition ... animate :)
+		draw_animation_array = block;
+		draw_animation_cur_idx = -1;
 		draw_animation_interval_id = setInterval(animate, 150);
 	}
 	else setMatrix(block);
 }
+
+var matrix_types = ["chars", "animations", "transitions"];
 
 function doImport(evt)
 {
 	if (evt) evt.preventDefault();
 	tmp = JSON.parse($("#exported_data").val());
 
-	// set links
-	var ul = $("#symbols ul").empty();
-
-	for (var symbol in tmp)
+	// convert the tmp structure to the correct js format setup...
+	function updateMatrix(m)
 	{
-		link = $(document.createElement("a"))
-			.attr({href: "#", id: "symbol_" + symbol})
-			.text(symbol)
-			.appendTo($(document.createElement("li")).appendTo(ul))
-			.click(showSymbol);
+		for (var idx in m)
+		{
+			m[idx] = mrol(m[idx]);
+		}
+	}
+
+	for (var idx in matrix_types)
+	{
+		var matrix_type = matrix_types[idx];
+
+		for (var symbol in tmp[matrix_type])
+		{
+			var m = tmp[matrix_type][symbol];
+			if (typeof(m[0]) == "object")
+			{
+				$.each(m, function(idx, m){updateMatrix(m);});
+			}
+			else
+			{
+				updateMatrix(m);
+			}
+		}
+	}	
+
+	// set links
+
+	for (var idx in matrix_types)
+	{
+		var matrix_type = matrix_types[idx];
+		var ul = $("#symbols ul#" + matrix_type).empty();
+
+		for (var symbol in tmp[matrix_type])
+		{
+			link = $(document.createElement("a"))
+				.attr({href: "#", id: "symbol_" + matrix_type + "_" + symbol})
+				.data({symbol: symbol, matrix_type: matrix_type})
+				.text(symbol)
+				.appendTo($(document.createElement("li")).appendTo(ul))
+				.click(showSymbol);
+		}
 	}
 
 	$("#exported_data").val("");
@@ -135,6 +246,29 @@ var draw_single_click_delay = 200;
 function noop(){};
 
 var _dodraw = noop;
+
+var led_types = ["on", "frame1", "frame2"];
+var led_type_cur = -1;
+var led_all_types = led_types.join(" ");
+var led_other_types = "";
+
+// initialize NOW!
+cycle_led_type();
+
+function cycle_led_type(evt)
+{
+	if (evt)
+	{
+		evt.preventDefault();
+		evt.stopPropagation();
+	}
+
+	led_type_cur = (led_type_cur+1)%led_types.length;
+
+	led_other_types = led_types.concat()
+	led_other_types.splice(led_type_cur, 1)
+	led_other_types = led_other_types.join(" ");
+}
 
 function begindraw(evt)
 {
@@ -152,7 +286,7 @@ function dodraw(evt)
 
 function __dodraw()
 {
-	$(this).addClass("on");
+	$(this).removeClass(led_all_types).addClass(led_types[led_type_cur]);
 }
 
 function enddraw(evt)
@@ -164,21 +298,25 @@ function enddraw(evt)
 	{
 		// single click in current cell
 		clearTimeout(draw_interval_id);
-		$(this).toggleClass("on");
+		// remove all classes not of current type
+		$(this).removeClass(led_other_types).toggleClass(led_types[led_type_cur]);
 	}
 	_dodraw = noop;
 }
 
 $(function(){
-	tds = $("#matrix td").mousedown(begindraw).mouseup(enddraw).mouseenter(dodraw);
+	tds = $("#matrix td")
+		.bind("contextmenu", cycle_led_type)
+		.mousedown(begindraw)
+		.mouseup(enddraw)
+		.mouseenter(dodraw)
 	$(document).mouseup(enddraw);
 
-	$("#clear").click(clear);
+	$("#clear").click(stopanimation);
 	$("#set").click(setSymbol);
 	$("#add").click(addToSymbol);
 	$("#export").click(doExport);
 	$("#import").click(doImport);
-	$("#stop_animation").click(stopanimation);
 	$("#exported_data, #symbol").val("");
 });
 </script>
@@ -202,6 +340,14 @@ $(function(){
 #matrix table td.on
 {
 	background-color: #000;
+}
+#matrix table td.frame1
+{
+	background-color: #900;
+}
+#matrix table td.frame2
+{
+	background-color: #090;
 }
 #exported_data
 {
@@ -238,10 +384,14 @@ $(function(){
 		<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
 	</table>
 	<a href="#" id="clear">clear</a>
-	<input type="text" id="symbol" size="5" />
+	<select id="matrix_type">
+		<option value="chars">char</option>
+		<option value="animations">animation</option>
+		<option value="transitions">transition</option>
+	</select>
+	<input type="text" id="symbol" size="8" />
 	<a href="#" id="set">set</a>
 	<a href="#" id="add">add</a><br />
-	<a href="#" id="stop_animation">stop animation</a>
 </div>
 
 <div id="symbols">
@@ -249,13 +399,18 @@ $(function(){
 	-
 	<a href="#" id="export">export</a><br />
 	<textarea id="exported_data"></textarea>
-	<ul></ul>
+	<p>chars</p>
+	<ul id="chars"></ul>
+	<p>animations</p>
+	<ul id="animations"></ul>
+	<p>transitions</p>
+	<ul id="transitions"></ul>
 </div>
 
 
 <div id="example" style="clear:both;">
 Sorry, no doc for now :p . Copy paste the text below to text area above and then click "import" to see a default charset in action.
-<pre>{"A":[0,24,36,66,126,66,66,0],"B":[0,62,66,62,66,66,62,0],"C":[0,60,66,2,2,66,60,0],"D":[0,30,34,66,66,34,30,0],"E":[0,126,2,30,2,2,126,0],"F":[0,126,2,30,2,2,2,0],"G":[0,60,66,2,98,66,60,0],"H":[0,66,66,126,66,66,66,0],"I":[0,28,8,8,8,8,28,0],"J":[0,32,32,32,34,34,28,0],"K":[0,66,34,30,34,66,66,0],"L":[0,2,2,2,2,2,126,0],"M":[0,66,102,90,66,66,66,0],"N":[0,66,70,74,82,98,66,0],"O":[0,60,66,66,66,66,60,0],"P":[0,62,66,66,62,2,2,0],"Q":[0,124,66,66,124,64,64,0],"R":[0,62,66,62,66,66,66,0],"S":[0,124,2,60,64,64,62,0],"T":[0,62,8,8,8,8,8,0],"U":[0,66,66,66,66,66,60,0],"V":[0,66,66,66,36,36,24,0],"W":[0,66,66,66,90,102,66,0],"X":[0,66,36,24,24,36,66,0],"Y":[0,34,34,20,8,8,8,0],"Z":[0,126,32,16,8,4,126,0],"1":[0,16,24,16,16,16,56,0],"2":[0,62,64,32,24,4,126,0],"3":[0,126,64,120,64,64,126,0],"4":[0,66,66,66,126,64,64,0],"5":[0,126,2,62,64,64,62,0],"6":[0,124,2,62,66,66,60,0],"7":[0,124,64,32,32,16,16,0],"8":[0,60,66,60,66,66,60,0],"9":[0,60,66,66,124,64,62,0],"0":[0,60,98,82,74,70,60,0],"heart":[0,102,153,129,129,66,36,24],"happy":[60,66,165,129,165,153,66,60],"sad":[60,66,165,129,153,165,66,60],"snow":[0,73,42,28,127,28,42,73],"working":[[128,64,32,16,8,4,2,1],[0,0,192,48,12,3,0,0],[0,0,0,240,15,0,0,0],[0,0,0,15,240,0,0,0],[0,0,3,12,48,192,0,0],[1,2,4,8,16,32,64,128],[4,4,8,8,16,16,32,32],[8,8,8,8,16,16,16,16],[16,16,16,16,8,8,8,8],[32,32,16,16,8,8,4,4]],"transition1":[[0,0,0,24,24,0,0,0],[0,0,60,36,36,60,0,0],[0,126,66,66,66,66,126,0],[255,129,129,129,129,129,129,255],[0,0,0,0,0,0,0,0]],"transition2":[[255,0,0,0,0,0,0,0],[0,255,0,0,0,0,0,0],[0,0,255,0,0,0,0,0],[0,0,0,255,0,0,0,0],[0,0,0,0,255,0,0,0],[0,0,0,0,0,255,0,0],[0,0,0,0,0,0,255,0],[0,0,0,0,0,0,0,255],[0,0,0,0,0,0,0,0]],"transition3":[[1,1,1,1,1,1,1,1],[2,2,2,2,2,2,2,2],[4,4,4,4,4,4,4,4],[8,8,8,8,8,8,8,8],[16,16,16,16,16,16,16,16],[32,32,32,32,32,32,32,32],[64,64,64,64,64,64,64,64],[128,128,128,128,128,128,128,128],[0,0,0,0,0,0,0,0]],"transition4":[[1,0,0,0,0,0,0,0],[2,1,0,0,0,0,0,0],[4,2,1,0,0,0,0,0],[8,4,2,1,0,0,0,0],[16,8,4,2,1,0,0,0],[32,16,8,4,2,1,0,0],[64,32,16,8,4,2,1,0],[128,64,32,16,8,4,2,1],[0,128,64,32,16,8,4,2],[0,0,128,64,32,16,8,4],[0,0,0,128,64,32,16,8],[0,0,0,0,128,64,32,16],[0,0,0,0,0,128,64,32],[0,0,0,0,0,0,128,64],[0,0,0,0,0,0,0,128],[0,0,0,0,0,0,0,0]],"transition5":[[0,0,0,24,24,0,0,0],[0,0,24,36,36,24,0,0],[0,24,36,66,66,36,24,0],[24,36,66,129,129,66,36,24],[36,66,129,0,0,129,66,36],[66,129,0,0,0,0,129,66],[129,0,0,0,0,0,0,129],[0,0,0,0,0,0,0,0]]}</pre>
+<pre>{"chars":{" ":[0,0,0,0,0,0,0,0],"A":[0,12,18,33,63,33,33,0],"B":[0,31,33,31,33,33,31,0],"C":[0,30,33,1,1,33,30,0],"D":[0,15,17,33,33,17,15,0],"E":[0,63,1,15,1,1,63,0],"F":[0,63,1,15,1,1,1,0],"G":[0,30,33,1,49,33,30,0],"H":[0,33,33,63,33,33,33,0],"I":[0,14,4,4,4,4,14,0],"J":[0,16,16,16,17,17,14,0],"K":[0,33,17,15,17,33,33,0],"L":[0,1,1,1,1,1,63,0],"M":[0,33,51,45,33,33,33,0],"N":[0,33,35,37,41,49,33,0],"O":[0,30,33,33,33,33,30,0],"P":[0,31,33,33,31,1,1,0],"Q":[0,62,33,33,62,32,32,0],"R":[0,31,33,31,33,33,33,0],"S":[0,62,1,30,32,32,31,0],"T":[0,31,4,4,4,4,4,0],"U":[0,33,33,33,33,33,30,0],"V":[0,33,33,33,18,18,12,0],"W":[0,33,33,33,45,51,33,0],"X":[0,33,18,12,12,18,33,0],"Y":[0,17,17,10,4,4,4,0],"Z":[0,63,16,8,4,2,63,0],"1":[0,8,12,8,8,8,28,0],"2":[0,31,32,16,12,2,63,0],"3":[0,63,32,60,32,32,63,0],"4":[0,33,33,33,63,32,32,0],"5":[0,63,1,31,32,32,31,0],"6":[0,62,1,31,33,33,30,0],"7":[0,62,32,16,16,8,8,0],"8":[0,30,33,30,33,33,30,0],"9":[0,30,33,33,62,32,31,0],"0":[0,30,49,41,37,35,30,0],"heart":[0,51,204,192,192,33,18,12],"happy":[30,33,210,192,210,204,33,30],"sad":[30,33,210,192,204,210,33,30],"snow":[0,164,21,14,191,14,21,164]},"animations": {"working":[[64,32,16,8,4,2,1,128],[0,0,96,24,6,129,0,0],[0,0,0,120,135,0,0,0],[0,0,0,135,120,0,0,0],[0,0,129,6,24,96,0,0],[128,1,2,4,8,16,32,64],[2,2,4,4,8,8,16,16],[4,4,4,4,8,8,8,8],[8,8,8,8,4,4,4,4],[16,16,8,8,4,4,2,2]]},"transitions": {"transition1":[[0,0,0,12,12,0,0,0],[0,0,30,18,18,30,0,0],[0,63,33,33,33,33,63,0],[255,192,192,192,192,192,192,255]],"transition2":[[255,0,0,0,0,0,0,0],[0,255,0,0,0,0,0,0],[0,0,255,0,0,0,0,0],[0,0,0,255,0,0,0,0],[0,0,0,0,255,0,0,0],[0,0,0,0,0,255,0,0],[0,0,0,0,0,0,255,0],[0,0,0,0,0,0,0,255]],"transition3":[[128,128,128,128,128,128,128,128],[1,1,1,1,1,1,1,1],[2,2,2,2,2,2,2,2],[4,4,4,4,4,4,4,4],[8,8,8,8,8,8,8,8],[16,16,16,16,16,16,16,16],[32,32,32,32,32,32,32,32],[64,64,64,64,64,64,64,64]],"transition4":[[128,0,0,0,0,0,0,0],[1,128,0,0,0,0,0,0],[2,1,128,0,0,0,0,0],[4,2,1,128,0,0,0,0],[8,4,2,1,128,0,0,0],[16,8,4,2,1,128,0,0],[32,16,8,4,2,1,128,0],[64,32,16,8,4,2,1,128],[0,64,32,16,8,4,2,1],[0,0,64,32,16,8,4,2],[0,0,0,64,32,16,8,4],[0,0,0,0,64,32,16,8],[0,0,0,0,0,64,32,16],[0,0,0,0,0,0,64,32],[0,0,0,0,0,0,0,64]],"transition5":[[0,0,0,12,12,0,0,0],[0,0,12,18,18,12,0,0],[0,12,18,33,33,18,12,0],[12,18,33,192,192,33,18,12],[18,33,192,0,0,192,33,18],[33,192,0,0,0,0,192,33],[192,0,0,0,0,0,0,192]]}}</pre>
 </div>
 
 </body>
