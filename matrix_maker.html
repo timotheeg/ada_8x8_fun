@@ -305,8 +305,8 @@ function enddraw(evt)
 }
 
 
-var play_char_duration = 1000;
-var play_char_transition = 40;
+var play_char_duration = 750;
+var play_char_transition = 30;
 var play_str = "";
 var play_trans = "";
 var play_cur_char_idx = -1;
@@ -317,7 +317,24 @@ var play_next_char_matrix = null;
 function play(str, trans)
 {
 	play_str = str.charAt(0) == "0" ? str : " " + str;
-	play_trans = data.transitions[trans];
+	if (trans)
+	{
+		play_trans = data.transitions[trans];
+	}
+	else 
+	{
+		// pick a random transition
+		var ts = [];
+		for (var t in data.transitions)
+		{
+			ts.push(t);
+		}
+
+		var idx = Math.floor(Math.random()*ts.length);
+
+		play_trans = data.transitions[ts[idx]];
+	}
+	
 
 	play_cur_char_idx = -1;
 	play_char();
@@ -340,7 +357,7 @@ function play_trans_step()
 {
 	if (++play_cur_trans_idx >= play_trans.length)
 	{
-		draw_animation_interval_id = setTimeout(play_char, play_char_transition);
+		play_char(); // display next char in full
 		return;
 	}
 
